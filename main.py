@@ -71,6 +71,34 @@ def inspect_url(value):
         "warnings": warnings,
     }
 
+def calculate_risk(warnings):
+    """ Estimate risk using configured url """
+    score = 0
+
+    for warning in warnings:
+        if "disguise the destination" in warning:
+            score += 30
+        elif "does not encrypt" in warning:
+            score +=25
+        elif "embedded credentials" in warning:
+            score += 25
+        elif "Ip address" in warning:
+            score += 15
+        elif "unusually long" in warning:
+            score += 10
+        elif "fragment " in warning:
+            score += 5
+
+    score = min(score, 100)
+
+    if score >= 60:
+        level = "HIGH"
+    elif score >= 25:
+        level = "Medium"
+    else:
+        level = "LOW"
+
+    return score,level 
 
 class NetSleuth(ctk.CTk):
     def __init__(self):
@@ -257,8 +285,7 @@ class NetSleuth(ctk.CTk):
 
         self.write_results(current)    
         self.status_label.configure(text=status)
-        self.analyze_button.configure(state="normal")  
-
+        self.analyze_button.configure(state="normal")
 
 if __name__ == "__main__":
     app = NetSleuth()
