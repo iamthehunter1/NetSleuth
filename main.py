@@ -7,7 +7,14 @@ from datetime import datetime
 
 
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("green")
+ctk.set_default_color_theme("dark-blue")
+
+PURPLE = "#8B5CF6"
+PURPLE_HOVER = "#7C3AED"
+BG_COLOR = "#111018"
+PANEL_COLOR = "#1C1A27"
+TEXT_COLOR = "#F4F0FF"
+MUTED_COLOR = "#A6A0B8"
 
 def inspect_url(value):
     value = value.strip()
@@ -100,96 +107,233 @@ def calculate_risk(warnings):
 
     return score,level 
 
+
 class NetSleuth(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("NetSleuth | URL Intelligence")
-        self.geometry("850x650")
-        self.minsize(700, 550)
+        self.title("NetSleuth | Security Intelligence")
+        self.geometry("1000x680")
+        self.minsize(780, 560)
+        self.configure(fg_color=BG_COLOR)
 
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        self.title_label = ctk.CTkLabel(
-            self,
-            text="NETSLEUTH",
-            font=ctk.CTkFont(size=30, weight="bold"),
+        # Sidebar
+        self.sidebar = ctk.CTkFrame(
+            self, width=205, corner_radius=0,
+            fg_color="#171521"
         )
-        self.title_label.grid(
-            row=0, column=0, padx=20, pady=(25, 5)
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid_propagate(False)
+
+        ctk.CTkLabel(
+            self.sidebar, text="◈ NetSleuth",
+            font=ctk.CTkFont(size=23, weight="bold"),
+            text_color=PURPLE
+        ).pack(padx=18, pady=(28, 4), anchor="w")
+
+        ctk.CTkLabel(
+            self.sidebar, text="SECURITY INTELLIGENCE",
+            font=ctk.CTkFont(size=10),
+            text_color=MUTED_COLOR
+        ).pack(padx=20, pady=(0, 30), anchor="w")
+
+        self.pages = {}
+
+        self.content = ctk.CTkFrame(
+            self, corner_radius=0, fg_color=BG_COLOR
+        )
+        self.content.grid(row=0, column=1, sticky="nsew")
+        self.content.grid_rowconfigure(1, weight=1)
+        self.content.grid_columnconfigure(0, weight=1)
+
+        self.header = ctk.CTkFrame(
+            self.content, fg_color="transparent"
+        )
+        self.header.grid(
+            row=0, column=0, sticky="ew",
+            padx=28, pady=(24, 10)
         )
 
-        self.subtitle = ctk.CTkLabel(
-            self,
-            text="URL Inspection & DNS Intelligence",
-            font=ctk.CTkFont(size=14),
-            text_color="gray",
+        self.page_title = ctk.CTkLabel(
+            self.header, text="URL Scanner",
+            font=ctk.CTkFont(size=27, weight="bold"),
+            text_color=TEXT_COLOR
         )
-        self.subtitle.grid(row=1, column=0, padx=20, pady=(0, 20))
+        self.page_title.pack(anchor="w")
 
-        self.input_frame = ctk.CTkFrame(self)
-        self.input_frame.grid(
-            row=2, column=0, padx=25, pady=5, sticky="ew"
+        self.page_subtitle = ctk.CTkLabel(
+            self.header,
+            text="Inspect URLs, warnings and hostname information.",
+            text_color=MUTED_COLOR
         )
-        self.input_frame.grid_columnconfigure(0, weight=1)
+        self.page_subtitle.pack(anchor="w", pady=(4, 0))
+
+        self.page_area = ctk.CTkFrame(
+            self.content, fg_color="transparent"
+        )
+        self.page_area.grid(
+            row=1, column=0, sticky="nsew",
+            padx=25, pady=(8, 20)
+        )
+        self.page_area.grid_rowconfigure(0, weight=1)
+        self.page_area.grid_columnconfigure(0, weight=1)
+
+        self.create_url_page()
+        self.create_dns_page()
+
+        # Navigation
+        self.nav_buttons = {}
+
+        for name, label in [
+            ("URL Scanner", "⌕   URL Scanner"),
+            ("DNS Lookup", "◎   DNS Lookup"),
+        ]:
+            button = ctk.CTkButton(
+                self.sidebar,
+                text=label,
+                anchor="w",
+                height=43,
+                corner_radius=9,
+                fg_color="transparent",
+                hover_color="#302744",
+                text_color=TEXT_COLOR,
+                command=lambda page=name: self.show_page(page)
+            )
+            button.pack(fill="x", padx=12, pady=4)
+            self.nav_buttons[name] = button
+
+        ctk.CTkLabel(
+            self.sidebar,
+            text="NETSLEUTH  •  LOCAL TOOL",
+            text_color=MUTED_COLOR,
+            font=ctk.CTkFont(size=10)
+        ).pack(side="bottom", padx=14, pady=18)
+
+        self.show_page("URL Scanner")
+
+    def create_url_page(self):
+        page = ctk.CTkFrame(
+            self.page_area, fg_color="transparent"
+        )
+        self.pages["URL Scanner"] = page
+
+        ctk.CTkLabel(
+            page, text="Enter a URL to investigate",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=TEXT_COLOR
+        ).pack(anchor="w", pady=(4, 10))
 
         self.url_entry = ctk.CTkEntry(
-            self.input_frame,
-            placeholder_text="Enter a URL, e.g. https://example.com",
-            height=42,
+            page, height=43,
+            placeholder_text="https://example.com",
+            border_color=PURPLE,
+            fg_color=PANEL_COLOR
         )
-        self.url_entry.grid(
-            row=0, column=0, padx=(12, 8), pady=12, sticky="ew"
+        self.url_entry.pack(fill="x", pady=(0, 10))
+        self.url_entry.bind(
+            "<Return>", lambda event: self.analyze_url()
         )
-        self.url_entry.bind("<Return>", lambda event: self.analyze_url())
 
-        self.analyze_button = ctk.CTkButton(
-            self.input_frame,
-            text="Analyze URL",
-            height=42,
-            command=self.analyze_url,
-        )
-        self.analyze_button.grid(
-            row=0, column=1, padx=(0, 12), pady=12
-        )
+        ctk.CTkButton(
+            page, text="Analyze URL",
+            height=42, fg_color=PURPLE,
+            hover_color=PURPLE_HOVER,
+            command=self.analyze_url
+        ).pack(anchor="w", pady=(0, 16))
 
         self.results = ctk.CTkTextbox(
-            self,
+            page, wrap="word",
             font=ctk.CTkFont(family="Consolas", size=13),
-            wrap="word",
+            fg_color=PANEL_COLOR,
+            border_width=1,
+            border_color="#393148"
         )
-        self.results.grid(
+        self.results.pack(fill="both", expand=True)
 
-            row=3, column=0, padx=25, pady=15, sticky="nsew"
-        )
-
-        self.status_label = ctk.CTkLabel(
-            self,
-            text="Ready — enter a URL to begin.",  
-            anchor="w",
-        )
-        self.status_label.grid(
-            row=4, column=0, padx=25, pady=(0, 15), sticky="ew"
-        )
-
-        self.show_welcome()
-
-    def show_welcome(self):
         self.results.insert(
             "end",
-            "Welcome to NetSleuth\n"
-            "====================\n\n"
-            "Inspect a URL to view its parsed components and warnings.\n"
-            "You can also perform a DNS lookup for its hostname.\n\n"
-            "Note: This tool performs basic static checks. "
-            "A clean result does not prove a URL is safe.\n",
-        ) 
+            "Welcome to NetSleuth\n\n"
+            "Enter a URL to inspect its components and warnings.\n"
+            "DNS address resolution runs after URL inspection.\n\n"
+            "Risk indicators are heuristic checks, not proof "
+            "that a website is malicious or safe.\n"
+        )
 
+    def create_dns_page(self):
+        page = ctk.CTkFrame(
+            self.page_area, fg_color="transparent"
+        )
+        self.pages["DNS Lookup"] = page
 
-    def write_results(self, text):
-        self.results.delete("1.0", "end")
-        self.results.insert("end", text)
+        ctk.CTkLabel(
+            page, text="DNS Record Lookup",
+            font=ctk.CTkFont(size=19, weight="bold"),
+            text_color=TEXT_COLOR
+        ).pack(anchor="w", pady=(4, 6))
+
+        ctk.CTkLabel(
+            page,
+            text="Look up A and AAAA addresses for a hostname.",
+            text_color=MUTED_COLOR
+        ).pack(anchor="w", pady=(0, 14))
+
+        self.dns_entry = ctk.CTkEntry(
+            page, height=43,
+            placeholder_text="example.com",
+            border_color=PURPLE,
+            fg_color=PANEL_COLOR
+        )
+        self.dns_entry.pack(fill="x", pady=(0, 10))
+        self.dns_entry.bind(
+            "<Return>", lambda event: self.lookup_dns()
+        )
+
+        ctk.CTkButton(
+            page, text="Look Up Hostname",
+            height=42, fg_color=PURPLE,
+            hover_color=PURPLE_HOVER,
+            command=self.lookup_dns
+        ).pack(anchor="w", pady=(0, 16))
+
+        self.dns_results = ctk.CTkTextbox(
+            page, wrap="word",
+            font=ctk.CTkFont(family="Consolas", size=13),
+            fg_color=PANEL_COLOR,
+            border_width=1,
+            border_color="#393148"
+        )
+        self.dns_results.pack(fill="both", expand=True)
+        self.dns_results.insert(
+            "end",
+            "DNS lookup ready.\n\n"
+            "Enter a hostname above to resolve its IP addresses."
+        )
+
+    def show_page(self, page_name):
+        for page in self.pages.values():
+            page.grid_forget()
+
+        self.pages[page_name].grid(
+            row=0, column=0, sticky="nsew"
+        )
+
+        self.page_title.configure(text=page_name)
+
+        subtitles = {
+            "URL Scanner": "Inspect URLs, warnings and hostname information.",
+            "DNS Lookup": "Resolve a hostname to its IP addresses."
+        }
+        self.page_subtitle.configure(
+            text=subtitles[page_name]
+        )
+
+        for name, button in self.nav_buttons.items():
+            button.configure(
+                fg_color=PURPLE if name == page_name else "transparent"
+            )
 
     def analyze_url(self):
         value = self.url_entry.get()
@@ -197,29 +341,31 @@ class NetSleuth(ctk.CTk):
         try:
             info = inspect_url(value)
         except (ValueError, UnicodeError) as error:
-            self.status_label.configure(text="URL validation failed.")
-            self.write_results(
-                "URL INSPECTION FAILED\n"
-                "=====================\n\n"
-                f"Reason: {error}\n"
+            self.results.delete("1.0", "end")
+            self.results.insert(
+                "end", f"URL inspection failed:\n{error}"
             )
             return
 
+        score, level = calculate_risk(info["warnings"])
+
         report = [
             "URL INSPECTION REPORT",
-            "=" * 45,
-            f"Time:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"URL:    {info['url']}",
+            "=" * 38,
+            f"Time: {datetime.now():%Y-%m-%d %H:%M:%S}",
+            f"URL: {info['url']}",
+            "",
+            f"Risk score: {score}/100 ({level})",
             "",
             "PARSED COMPONENTS",
-            "-" * 45,
+            "-" * 38,
             f"Scheme: {info['scheme']}",
             f"Host:   {info['host']}",
             f"Port:   {info['port']}",
             f"Path:   {info['path']}",
             "",
             "WARNINGS",
-            "-" * 45,
+            "-" * 38,
         ]
 
         if info["warnings"]:
@@ -227,65 +373,90 @@ class NetSleuth(ctk.CTk):
                 f"[!] {warning}" for warning in info["warnings"]
             )
         else:
-            report.append("No configured warnings were detected.")
+            report.append("No configured warnings detected.")
 
         report.extend([
-            "",
-            "DNS LOOKUP",
-            "-" * 45,
-            "Looking up hostname...",
+            "", "DNS ADDRESS LOOKUP", "-" * 38,
+            "Resolving hostname..."
         ])
 
-        self.write_results("\n".join(report))
-        self.status_label.configure(text="URL inspected. Resolving DNS...")
-        self.analyze_button.configure(state="disabled")
+        self.results.delete("1.0", "end")
+        self.results.insert("end", "\n".join(report))
 
-        worker = threading.Thread(
+        self.nav_buttons["URL Scanner"].configure(
+            fg_color=PURPLE
+        )
+
+        threading.Thread(
             target=self.resolve_dns,
             args=(info["host"],),
-            daemon=True,
-        )
-        worker.start()
+            daemon=True
+        ).start()
 
     def resolve_dns(self, hostname):
         try:
-            results = socket.getaddrinfo(
-                hostname,
-                None,
-                type=socket.SOCK_STREAM,
-            )
             addresses = sorted({
-                result[4][0] for result in results
+                result[4][0]
+                for result in socket.getaddrinfo(
+                    hostname, None, type=socket.SOCK_STREAM
+                )
             })
-
-            if addresses:
-                message = "\n".join(f"  {address}" for address in addresses)
-            else:
-                message = "  No addresses returned."
-
-            status = "DNS lookup completed."
-        except socket.gaierror as error:
-            message = f"  DNS lookup failed: {error}"
-            status = "DNS lookup failed."
+            message = "\n".join(addresses) if addresses else "No addresses returned."
         except OSError as error:
-            message = f"  Network error: {error}"
-            status = "DNS lookup encountered an error."
+            message = f"DNS lookup failed: {error}"
 
-        self.after(0, self.finish_dns, message, status)
+        self.after(0, self.append_dns_result, message)
 
-    def finish_dns(self, message, status):
+    def append_dns_result(self, message):
         current = self.results.get("1.0", "end").rstrip()
+        current = current.replace("Resolving hostname...", message)
+        self.results.delete("1.0", "end")
+        self.results.insert("end", current)
 
-        if "Looking up hostname..." in current:
-            current = current.replace(
-                "Looking up hostname...", message
+    def lookup_dns(self):
+        hostname = self.dns_entry.get().strip().rstrip(".")
+
+        if not hostname or any(
+            char.isspace() for char in hostname
+        ) or "://" in hostname or "/" in hostname:
+            self.dns_results.delete("1.0", "end")
+            self.dns_results.insert(
+                "end", "Enter a hostname such as example.com."
             )
-        else:
-            current += "\n\nDNS LOOKUP\n" + message
+            return
 
-        self.write_results(current)    
-        self.status_label.configure(text=status)
-        self.analyze_button.configure(state="normal")
+        self.dns_results.delete("1.0", "end")
+        self.dns_results.insert("end", "Resolving hostname...")
+
+        def worker():
+            try:
+                addresses = sorted({
+                    result[4][0]
+                    for result in socket.getaddrinfo(
+                        hostname, None, type=socket.SOCK_STREAM
+                    )
+                })
+                message = (
+                    "\n".join(addresses)
+                    if addresses else "No addresses returned."
+                )
+            except OSError as error:
+                message = f"Lookup failed: {error}"
+
+            self.after(0, self.show_dns_results, hostname, message)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def show_dns_results(self, hostname, message):
+        self.dns_results.delete("1.0", "end")
+        self.dns_results.insert(
+            "end",
+            f"DNS LOOKUP REPORT\n{'=' * 35}\n"
+            f"Hostname: {hostname}\n\n"
+            f"IP ADDRESSES\n{'-' * 35}\n{message}\n\n"
+            "This basic lookup does not retrieve MX or NS records."
+        )
+
 
 if __name__ == "__main__":
     app = NetSleuth()
