@@ -1,12 +1,13 @@
 
 import customtkinter as ctk
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 import ipaddress
 import socket
 import threading
 import ssl
 from datetime import datetime, timezone
-
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
@@ -41,6 +42,9 @@ def inspect_url(value):
     if parsed.scheme not in ("http", "https") or not hostname:
         raise ValueError("Enter a valid HTTP or HTTPS URL.")
 
+    if parsed.username or parsed.password:
+        raise ValueError("URLs containing embedded credentials are not supported.")
+
     hostname = hostname.rstrip(".").encode("idna").decode("ascii").lower()
 
     if len(hostname) > 235 or any(
@@ -64,9 +68,6 @@ def inspect_url(value):
         warnings.append("Host is an IP address, not a domain name.")
     except ValueError:
         pass
-
-    if parsed.username or parsed.password:
-        warnings.append("URL contains embedded credentials.")
 
     if parsed.fragment:
         warnings.append("URL contains a fragment (#section).")
@@ -199,10 +200,7 @@ def inspect_ssl_certificate(hostname, port=443):
             "-" * 54,
         ]
 
-        if san_lines:
-            report.extend(san_lines)
-        else:
-            report.append("No SAN entries provided.")
+        report.extend(san_lines or ["No SAN entries provided."])
 
         report.extend([
             "",
@@ -211,7 +209,7 @@ def inspect_ssl_certificate(hostname, port=443):
             "The certificate chain and hostname passed",
             "the system's configured TLS verification checks.",
             "",
-            "Note: A valid certificate does not guarantee that",
+            "A valid certificate does not guarantee that",
             "a website is trustworthy or free of malicious content.",
             "=" * 54,
         ])
@@ -247,6 +245,119 @@ def inspect_ssl_certificate(hostname, port=443):
             f"Could not inspect the TLS certificate for {hostname}.\n"
             f"Error: {error}"
         )
+
+
+def inspect_security_headers(value):
+    value = value.strip()
+
+    if not value:
+        raise ValueError("Please enter a URL.")
+
+    if any(char.isspace() or ord(char) < 32 for char in value):
+        raise ValueError("URL cannot contain spaces or control characters.")
+
+    if "://" not in value:
+        value = "https://" + value
+
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("Enter a valid HTTP or HTTPS URL.")
+
+        if parsed.username or parsed.password:
+            raise ValueError("URLs containing embedded credentials are not supported.")
+
+        parsed.port
+    except ValueError as error:
+        raise ValueError(f"Invalid URL: {error}") from error
+
+    request = Request(
+        value,
+        headers={
+            "User-Agent": "NetSleuth/1.0",
+            "Accept": "*/*",
+        },
+        method="GET",
+    )
+
+    try:
+        response = urlopen(request, timeout=10)
+    except HTTPError as error:
+        response = error
+    except (URLError, TimeoutError, socket.timeout, OSError) as error:
+        raise RuntimeError(f"Could not connect to website: {error}") from error
+
+    with response:
+        status_code = response.status
+        final_url = response.geturl()
+        headers = response.headers
+        final_scheme = urlsplit(final_url).scheme.lower()
+
+        checks = [
+            (
+                "Strict-Transport-Security",
+                "HIGH",
+                "Helps enforce HTTPS connections.",
+                final_scheme == "https",
+            ),
+            (
+                "Content-Security-Policy",
+                "HIGH",
+                "Restricts the sources of scripts and other page resources.",
+                True,
+            ),
+            (
+                "X-Content-Type-Options",
+                "MEDIUM",
+                "Helps prevent browsers from guessing content types.",
+                True,
+            ),
+            (
+                "X-Frame-Options",
+                "MEDIUM",
+                "Helps control whether the page can be embedded in frames.",
+                True,
+            ),
+            (
+                "Referrer-Policy",
+                "LOW",
+                "Controls how much referrer information browsers send.",
+                True,
+            ),
+            (
+                "Permissions-Policy",
+                "LOW",
+                "Controls access to selected browser features.",
+                True,
+            ),
+        ]
+
+        findings = []
+
+        for name, severity, description, applicable in checks:
+            header_value = headers.get(name)
+
+            if not applicable:
+                status = "NOT APPLICABLE"
+            elif header_value:
+                status = "PRESENT"
+            else:
+                status = "MISSING"
+
+            findings.append({
+                "name": name,
+                "severity": severity,
+                "description": description,
+                "status": status,
+                "value": header_value.strip() if header_value else "",
+            })
+
+        return {
+            "requested_url": value,
+            "final_url": final_url,
+            "status_code": status_code,
+            "findings": findings,
+        }
 
 
 class NetSleuth(ctk.CTk):
@@ -340,6 +451,7 @@ class NetSleuth(ctk.CTk):
         self.create_url_page()
         self.create_dns_page()
         self.create_ssl_page()
+        self.create_headers_page()
 
         self.nav_buttons = {}
 
@@ -347,6 +459,7 @@ class NetSleuth(ctk.CTk):
             ("URL Scanner", "⌕   URL Scanner"),
             ("DNS Lookup", "◎   DNS Lookup"),
             ("SSL Checker", "SSL Checker"),
+            ("HTTP Headers", "HTTP Headers"),
         ]:
             button = ctk.CTkButton(
                 self.sidebar,
@@ -372,10 +485,7 @@ class NetSleuth(ctk.CTk):
         self.show_page("URL Scanner")
 
     def create_url_page(self):
-        page = ctk.CTkFrame(
-            self.page_area,
-            fg_color="transparent"
-        )
+        page = ctk.CTkFrame(self.page_area, fg_color="transparent")
         self.pages["URL Scanner"] = page
 
         ctk.CTkLabel(
@@ -393,10 +503,7 @@ class NetSleuth(ctk.CTk):
             fg_color=PANEL_COLOR
         )
         self.url_entry.pack(fill="x", pady=(0, 10))
-        self.url_entry.bind(
-            "<Return>",
-            lambda event: self.analyze_url()
-        )
+        self.url_entry.bind("<Return>", lambda event: self.analyze_url())
 
         ctk.CTkButton(
             page,
@@ -427,10 +534,7 @@ class NetSleuth(ctk.CTk):
         )
 
     def create_dns_page(self):
-        page = ctk.CTkFrame(
-            self.page_area,
-            fg_color="transparent"
-        )
+        page = ctk.CTkFrame(self.page_area, fg_color="transparent")
         self.pages["DNS Lookup"] = page
 
         ctk.CTkLabel(
@@ -442,7 +546,7 @@ class NetSleuth(ctk.CTk):
 
         ctk.CTkLabel(
             page,
-            text="Look up A and AAAA addresses for a hostname.",
+            text="Look up IP addresses for a hostname.",
             text_color=MUTED_COLOR
         ).pack(anchor="w", pady=(0, 14))
 
@@ -454,10 +558,7 @@ class NetSleuth(ctk.CTk):
             fg_color=PANEL_COLOR
         )
         self.dns_entry.pack(fill="x", pady=(0, 10))
-        self.dns_entry.bind(
-            "<Return>",
-            lambda event: self.lookup_dns()
-        )
+        self.dns_entry.bind("<Return>", lambda event: self.lookup_dns())
 
         ctk.CTkButton(
             page,
@@ -485,10 +586,7 @@ class NetSleuth(ctk.CTk):
         )
 
     def create_ssl_page(self):
-        page = ctk.CTkFrame(
-            self.page_area,
-            fg_color="transparent"
-        )
+        page = ctk.CTkFrame(self.page_area, fg_color="transparent")
         self.pages["SSL Checker"] = page
 
         ctk.CTkLabel(
@@ -525,10 +623,7 @@ class NetSleuth(ctk.CTk):
             hover_color=PURPLE_HOVER,
             command=self.check_ssl_certificate
         )
-        self.ssl_check_button.pack(
-            anchor="w",
-            pady=(0, 16)
-        )
+        self.ssl_check_button.pack(anchor="w", pady=(0, 16))
 
         self.ssl_results = ctk.CTkTextbox(
             page,
@@ -544,9 +639,208 @@ class NetSleuth(ctk.CTk):
             "end",
             "SSL/TLS certificate checker ready.\n\n"
             "Enter a hostname such as example.com.\n\n"
-            "The checker validates the certificate and hostname "
-            "and displays certificate and TLS details.\n\n"
             "Internet access is required."
+        )
+
+    def create_headers_page(self):
+        page = ctk.CTkFrame(self.page_area, fg_color="transparent")
+        self.pages["HTTP Headers"] = page
+
+        ctk.CTkLabel(
+            page,
+            text="HTTP Security Headers Checker",
+            font=ctk.CTkFont(size=19, weight="bold"),
+            text_color=TEXT_COLOR
+        ).pack(anchor="w", pady=(4, 6))
+
+        ctk.CTkLabel(
+            page,
+            text="Check a website's response for common security headers.",
+            text_color=MUTED_COLOR
+        ).pack(anchor="w", pady=(0, 14))
+
+        self.headers_entry = ctk.CTkEntry(
+            page,
+            height=43,
+            placeholder_text="https://example.com",
+            border_color=PURPLE,
+            fg_color=PANEL_COLOR
+        )
+        self.headers_entry.pack(fill="x", pady=(0, 10))
+        self.headers_entry.bind(
+            "<Return>",
+            lambda event: self.check_security_headers()
+        )
+
+        self.headers_check_button = ctk.CTkButton(
+            page,
+            text="Check Security Headers",
+            height=42,
+            fg_color=PURPLE,
+            hover_color=PURPLE_HOVER,
+            command=self.check_security_headers
+        )
+        self.headers_check_button.pack(anchor="w", pady=(0, 16))
+
+        self.headers_results = ctk.CTkTextbox(
+            page,
+            wrap="word",
+            font=ctk.CTkFont(family="Consolas", size=12),
+            fg_color=PANEL_COLOR,
+            border_width=1,
+            border_color="#393148"
+        )
+        self.headers_results.pack(fill="both", expand=True)
+
+        self.headers_results.insert(
+            "end",
+            "HTTP security headers checker ready.\n\n"
+            "Enter a website URL to inspect its response headers.\n\n"
+            "The report identifies missing headers and explains "
+            "their purpose. Missing headers alone do not prove "
+            "a website is vulnerable."
+        )
+
+    def show_page(self, page_name):
+        for page in self.pages.values():
+            page.grid_forget()
+
+        self.pages[page_name].grid(
+            row=0,
+            column=0,
+            sticky="nsew"
+        )
+
+        self.page_title.configure(text=page_name)
+
+        subtitles = {
+            "URL Scanner": "Inspect URLs, warnings and hostname information.",
+            "DNS Lookup": "Resolve a hostname to its IP addresses.",
+            "SSL Checker": "Inspect HTTPS certificates and TLS connections.",
+            "HTTP Headers": "Inspect HTTP responses for security headers.",
+        }
+
+        self.page_subtitle.configure(text=subtitles[page_name])
+
+        for name, button in self.nav_buttons.items():
+            button.configure(
+                fg_color=PURPLE if name == page_name else "transparent"
+            )
+
+    def analyze_url(self):
+        value = self.url_entry.get()
+
+        try:
+            info = inspect_url(value)
+        except (ValueError, UnicodeError) as error:
+            self.results.delete("1.0", "end")
+            self.results.insert("end", f"URL inspection failed:\n{error}")
+            return
+
+        score, level = calculate_risk(info["warnings"])
+
+        report = [
+            "URL INSPECTION REPORT",
+            "=" * 38,
+            f"Time: {datetime.now():%Y-%m-%d %H:%M:%S}",
+            f"URL: {info['url']}",
+            "",
+            f"Risk score: {score}/100 ({level})",
+            "",
+            "PARSED COMPONENTS",
+            "-" * 38,
+            f"Scheme: {info['scheme']}",
+            f"Host:   {info['host']}",
+            f"Port:   {info['port']}",
+            f"Path:   {info['path']}",
+            "",
+            "WARNINGS",
+            "-" * 38,
+        ]
+
+        if info["warnings"]:
+            report.extend(f"[!] {warning}" for warning in info["warnings"])
+        else:
+            report.append("No configured warnings detected.")
+
+        report.extend([
+            "",
+            "DNS ADDRESS LOOKUP",
+            "-" * 38,
+            "Resolving hostname...",
+        ])
+
+        self.results.delete("1.0", "end")
+        self.results.insert("end", "\n".join(report))
+
+        threading.Thread(
+            target=self.resolve_dns,
+            args=(info["host"],),
+            daemon=True
+        ).start()
+
+    def resolve_dns(self, hostname):
+        try:
+            addresses = sorted({
+                result[4][0]
+                for result in socket.getaddrinfo(
+                    hostname, None, type=socket.SOCK_STREAM
+                )
+            })
+            message = "\n".join(addresses) if addresses else "No addresses returned."
+        except OSError as error:
+            message = f"DNS lookup failed: {error}"
+
+        self.after(0, self.append_dns_result, message)
+
+    def append_dns_result(self, message):
+        current = self.results.get("1.0", "end").rstrip()
+        current = current.replace("Resolving hostname...", message)
+        self.results.delete("1.0", "end")
+        self.results.insert("end", current)
+
+    def lookup_dns(self):
+        hostname = self.dns_entry.get().strip().rstrip(".")
+
+        if (
+            not hostname
+            or any(char.isspace() for char in hostname)
+            or "://" in hostname
+            or "/" in hostname
+            or "@" in hostname
+        ):
+            self.dns_results.delete("1.0", "end")
+            self.dns_results.insert("end", "Enter a hostname such as example.com.")
+            return
+
+        self.dns_results.delete("1.0", "end")
+        self.dns_results.insert("end", "Resolving hostname...")
+
+        def worker():
+            try:
+                addresses = sorted({
+                    result[4][0]
+                    for result in socket.getaddrinfo(
+                        hostname, None, type=socket.SOCK_STREAM
+                    )
+                })
+                message = "\n".join(addresses) if addresses else "No addresses returned."
+            except OSError as error:
+                message = f"Lookup failed: {error}"
+
+            self.after(0, self.show_dns_results, hostname, message)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def show_dns_results(self, hostname, message):
+        self.dns_results.delete("1.0", "end")
+        self.dns_results.insert(
+            "end",
+            f"DNS LOOKUP REPORT\n{'=' * 35}\n"
+            f"Hostname: {hostname}\n\n"
+            f"IP ADDRESSES\n{'-' * 35}\n"
+            f"{message}\n\n"
+            "This basic lookup does not retrieve MX or NS records."
         )
 
     def check_ssl_certificate(self):
@@ -577,206 +871,99 @@ class NetSleuth(ctk.CTk):
             return
 
         self.ssl_results.delete("1.0", "end")
-        self.ssl_results.insert(
-            "end",
-            f"Checking TLS certificate for {hostname}...\nPlease wait."
-        )
-
+        self.ssl_results.insert("end", f"Checking TLS certificate for {hostname}...\nPlease wait.")
         self.ssl_check_button.configure(state="disabled")
 
         def worker():
             report = inspect_ssl_certificate(hostname)
 
             try:
-                self.after(
-                    0,
-                    self.show_ssl_results,
-                    report
-                )
+                self.after(0, self.show_ssl_results, report)
             except RuntimeError:
                 pass
 
-        threading.Thread(
-            target=worker,
-            daemon=True
-        ).start()
+        threading.Thread(target=worker, daemon=True).start()
 
     def show_ssl_results(self, report):
         self.ssl_results.delete("1.0", "end")
         self.ssl_results.insert("end", report)
         self.ssl_check_button.configure(state="normal")
 
-    def show_page(self, page_name):
-        for page in self.pages.values():
-            page.grid_forget()
+    def check_security_headers(self):
+        value = self.headers_entry.get().strip()
 
-        self.pages[page_name].grid(
-            row=0,
-            column=0,
-            sticky="nsew"
-        )
-
-        self.page_title.configure(text=page_name)
-
-        subtitles = {
-            "URL Scanner": "Inspect URLs, warnings and hostname information.",
-            "DNS Lookup": "Resolve a hostname to its IP addresses.",
-            "SSL Checker": "Inspect HTTPS certificates and TLS connections.",
-        }
-
-        self.page_subtitle.configure(text=subtitles[page_name])
-
-        for name, button in self.nav_buttons.items():
-            button.configure(
-                fg_color=PURPLE if name == page_name else "transparent"
-            )
-
-    def analyze_url(self):
-        value = self.url_entry.get()
-
-        try:
-            info = inspect_url(value)
-        except (ValueError, UnicodeError) as error:
-            self.results.delete("1.0", "end")
-            self.results.insert(
-                "end",
-                f"URL inspection failed:\n{error}"
-            )
-            return
-
-        score, level = calculate_risk(info["warnings"])
-
-        report = [
-            "URL INSPECTION REPORT",
-            "=" * 38,
-            f"Time: {datetime.now():%Y-%m-%d %H:%M:%S}",
-            f"URL: {info['url']}",
-            "",
-            f"Risk score: {score}/100 ({level})",
-            "",
-            "PARSED COMPONENTS",
-            "-" * 38,
-            f"Scheme: {info['scheme']}",
-            f"Host:   {info['host']}",
-            f"Port:   {info['port']}",
-            f"Path:   {info['path']}",
-            "",
-            "WARNINGS",
-            "-" * 38,
-        ]
-
-        if info["warnings"]:
-            report.extend(
-                f"[!] {warning}" for warning in info["warnings"]
-            )
-        else:
-            report.append("No configured warnings detected.")
-
-        report.extend([
-            "",
-            "DNS ADDRESS LOOKUP",
-            "-" * 38,
-            "Resolving hostname...",
-        ])
-
-        self.results.delete("1.0", "end")
-        self.results.insert("end", "\n".join(report))
-
-        threading.Thread(
-            target=self.resolve_dns,
-            args=(info["host"],),
-            daemon=True
-        ).start()
-
-    def resolve_dns(self, hostname):
-        try:
-            addresses = sorted({
-                result[4][0]
-                for result in socket.getaddrinfo(
-                    hostname,
-                    None,
-                    type=socket.SOCK_STREAM
-                )
-            })
-
-            message = (
-                "\n".join(addresses)
-                if addresses
-                else "No addresses returned."
-            )
-        except OSError as error:
-            message = f"DNS lookup failed: {error}"
-
-        self.after(0, self.append_dns_result, message)
-
-    def append_dns_result(self, message):
-        current = self.results.get("1.0", "end").rstrip()
-        current = current.replace("Resolving hostname...", message)
-
-        self.results.delete("1.0", "end")
-        self.results.insert("end", current)
-
-    def lookup_dns(self):
-        hostname = self.dns_entry.get().strip().rstrip(".")
-
-        if (
-            not hostname
-            or any(char.isspace() for char in hostname)
-            or "://" in hostname
-            or "/" in hostname
-            or "@" in hostname
-        ):
-            self.dns_results.delete("1.0", "end")
-            self.dns_results.insert(
-                "end",
-                "Enter a hostname such as example.com."
-            )
-            return
-
-        self.dns_results.delete("1.0", "end")
-        self.dns_results.insert("end", "Resolving hostname...")
+        self.headers_results.delete("1.0", "end")
+        self.headers_results.insert("end", "Checking HTTP security headers...\nPlease wait.")
+        self.headers_check_button.configure(state="disabled")
 
         def worker():
             try:
-                addresses = sorted({
-                    result[4][0]
-                    for result in socket.getaddrinfo(
-                        hostname,
-                        None,
-                        type=socket.SOCK_STREAM
-                    )
-                })
+                report = inspect_security_headers(value)
+                rendered = self.format_headers_report(report)
+            except (ValueError, UnicodeError, RuntimeError) as error:
+                rendered = f"HTTP headers check failed:\n{error}"
+            except Exception as error:
+                rendered = f"Unexpected error:\n{error}"
 
-                message = (
-                    "\n".join(addresses)
-                    if addresses
-                    else "No addresses returned."
-                )
-            except OSError as error:
-                message = f"Lookup failed: {error}"
+            try:
+                self.after(0, self.show_headers_results, rendered)
+            except RuntimeError:
+                pass
 
-            self.after(
-                0,
-                self.show_dns_results,
-                hostname,
-                message
-            )
+        threading.Thread(target=worker, daemon=True).start()
 
-        threading.Thread(
-            target=worker,
-            daemon=True
-        ).start()
+    def format_headers_report(self, report):
+        findings = report["findings"]
+        applicable = [
+            item for item in findings
+            if item["status"] != "NOT APPLICABLE"
+        ]
+        present = sum(item["status"] == "PRESENT" for item in applicable)
+        missing = sum(item["status"] == "MISSING" for item in applicable)
 
-    def show_dns_results(self, hostname, message):
-        self.dns_results.delete("1.0", "end")
-        self.dns_results.insert(
-            "end",
-            f"DNS LOOKUP REPORT\n{'=' * 35}\n"
-            f"Hostname: {hostname}\n\n"
-            f"IP ADDRESSES\n{'-' * 35}\n"
-            f"{message}\n\n"
-            "This basic lookup does not retrieve MX or NS records."
-        )
+        lines = [
+            "=" * 54,
+            "NETSLEUTH - HTTP SECURITY HEADERS REPORT",
+            "=" * 54,
+            f"Requested URL: {report['requested_url']}",
+            f"Final URL:     {report['final_url']}",
+            f"HTTP Status:   {report['status_code']}",
+            "",
+            f"Headers present: {present}/{len(applicable)}",
+            f"Headers missing: {missing}",
+            "",
+            "HEADER FINDINGS",
+            "-" * 54,
+        ]
+
+        for item in findings:
+            lines.extend([
+                "",
+                f"[{item['status']}] {item['name']} ({item['severity']})",
+                f"  {item['description']}",
+            ])
+
+            if item["value"]:
+                lines.append(f"  Value: {item['value']}")
+
+        lines.extend([
+            "",
+            "=" * 54,
+            "NOTES",
+            "-" * 54,
+            "Missing headers are potential hardening opportunities,",
+            "not automatic proof of a vulnerability.",
+            "Header values should be reviewed for correctness,",
+            "not just presence.",
+            "=" * 54,
+        ])
+
+        return "\n".join(lines)
+
+    def show_headers_results(self, report):
+        self.headers_results.delete("1.0", "end")
+        self.headers_results.insert("end", report)
+        self.headers_check_button.configure(state="normal")
 
 
 if __name__ == "__main__":
