@@ -28,7 +28,7 @@ def inspect_url(value):
     if any(char.isspace() or ord(char) < 32 for char in value):
         raise ValueError("URL cannot contain spaces or control characters.")
     if "://" not in value:
-        value = "https\://" + value
+        value = "https://" + value
     try:
         parsed = urlsplit(value)
         hostname = parsed.hostname
@@ -206,7 +206,7 @@ def inspect_security_headers(value):
     if any(char.isspace() or ord(char) < 32 for char in value):
         raise ValueError("URL cannot contain spaces or control characters.")
     if "://" not in value:
-        value = "https\://" + value
+        value = "https://" + value
     try:
         parsed = urlsplit(value)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -317,7 +317,7 @@ def enumerate_subdomains(value, resolve_dns=False):
     if any(
         not label
         or len(label) > 63
-        or not re.fullmatch(r"[a-z0-9]*(?:*[a-z0-9-]*[a-z0-9]*)*?", label)
+        or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) 
         for label in labels
     ):
         raise ValueError("Invalid domain name.")
@@ -328,7 +328,7 @@ def enumerate_subdomains(value, resolve_dns=False):
     else:
         raise ValueError("Enter a domain name, not an IP address.")
     request = Request(
-        "https\://crt.sh/?q=%25." + value + "&output=json",
+        "https://crt.sh/?q=%25." + value + "&output=json",
         headers={
             "User-Agent": "NetSleuth/1.0",
             "Accept": "application/json",
@@ -375,7 +375,7 @@ def enumerate_subdomains(value, resolve_dns=False):
                     label
                     and len(label) <= 63
                     and re.fullmatch(
-                        r"[a-z0-9]*(?:*[a-z0-9-]*[a-z0-9]*)*?",
+                        r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
                         label,
                     )
                     for label in candidate.split(".")
@@ -529,7 +529,7 @@ class NetSleuth(ctk.CTk):
         self.url_entry = ctk.CTkEntry(
             page,
             height=43,
-            placeholder_text="https\://example.com",
+            placeholder_text="https://example.com",
             border_color=PURPLE,
             fg_color=PANEL_COLOR,
         )
@@ -672,7 +672,7 @@ class NetSleuth(ctk.CTk):
         self.headers_entry = ctk.CTkEntry(
             page,
             height=43,
-            placeholder_text="https\://example.com",
+            placeholder_text="https://example.com",
             border_color=PURPLE,
             fg_color=PANEL_COLOR,
         )
@@ -779,6 +779,7 @@ class NetSleuth(ctk.CTk):
         table_frame.grid_rowconfigure(0, weight=1)
         table_frame.grid_columnconfigure(0, weight=1)
         style = ttk.Style()
+        style.theme_use("clam")
         style.configure(
             "NetSleuth.Treeview",
             background=PANEL_COLOR,
@@ -788,16 +789,24 @@ class NetSleuth(ctk.CTk):
             borderwidth=0,
         )
         style.configure(
-            "NetSleuth.Treeview\.Heading",
+            "NetSleuth.Treeview.Heading",
             background="#302744",
             foreground=TEXT_COLOR,
             relief="flat",
+            borderwidth=0,
+            padding=(8, 8),
         )
         style.map(
-            "NetSleuth.Treeview",
-            background=[("selected", PURPLE)],
-            foreground=[("selected", "#FFFFFF")],
-        )
+            "NetSleuth.Treeview.Heading",
+            background=[
+                ("active", "#242033"),
+                ("!active", "#242033"),
+    ],
+            foreground=[
+                ("active", "#682BDA"),
+                ("!active", "#8122EE"),
+    ],
+)
         self.subdomain_tree = ttk.Treeview(
             table_frame,
             columns=("host", "dns", "addresses"),
@@ -814,10 +823,18 @@ class NetSleuth(ctk.CTk):
         self.subdomain_tree.column(
             "addresses", width=250, minwidth=150
         )
+        style.configure(
+            "NetSleuth.Vertical.TScrollbar",
+            background="#302744",
+            troughcolor=PANEL_COLOR,
+            bordercolor=PANEL_COLOR,
+            arrowcolor=TEXT_COLOR,
+        )
         scrollbar = ttk.Scrollbar(
             table_frame,
             orient="vertical",
             command=self.subdomain_tree.yview,
+            style="NetSleuth.Vertical.TScrollbar",
         )
         self.subdomain_tree.configure(yscrollcommand=scrollbar.set)
         self.subdomain_tree.grid(
@@ -1140,7 +1157,7 @@ class NetSleuth(ctk.CTk):
             self.ssl_results.insert(
                 "end",
                 "Enter a hostname only, such as example.com.\n"
-                "Do not include https\://, a path or a port.",
+                "Do not include https://, a path or a port.",
             )
             return
         try:
