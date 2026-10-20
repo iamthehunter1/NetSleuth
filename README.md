@@ -1,49 +1,21 @@
-NetSleuth
+## About NetSleuth
 
-NetSleuth is a Python desktop cybersecurity tool for inspecting URLs and domains through a clean, dark-themed interface.
+NetSleuth is a Python-based security toolkit built with CustomTkinter. It includes URL analysis, DNS record lookup, SSL/TLS checks, HTTP security header analysis, passive subdomain enumeration, and IP information lookup.
 
-Planned Features
+## How to Run
 
-1. URL and domain analysis
+Download `NetSleuth.exe` from the [GitHub Releases](https://github.com/iamthehunter1/NetSleuth/releases) page and run it on Windows. Python does not need to be installed separately when using the packaged executable.
 
-2. HTTP and HTTPS detection
+Some features require an internet connection. IP information lookup may also require an IPinfo API token.
 
-3. Basic suspicious URL pattern warnings
+## Built With
 
-4. DNS lookup and IP address information
+- Python
+- CustomTkinter
+- dnspython
+- Requests
+- PyInstaller
 
-5. Domain registration information
+## Disclaimer
 
-6. TLS certificate inspection
-
-6. Exportable analysis reports
-
-Built With
-
-Python
-
-CustomTkinter
-
-Python standard library
-
-Getting Started
-
-Clone or download this repository.
-
-Create and activate a Python virtual environment.
-
-Install dependencies:
-
-```
-pip install -r requirements.txt
-```
-
-Run the application:
-
-```
-python main.py
-```
-
-Disclaimer
-
-NetSleuth is an educational project. Its checks are indicators for further investigation, not a guarantee that a URL or domain is safe or malicious.
+NetSleuth is intended for educational and authorized security testing. Only scan systems you own or have permission to assess.
