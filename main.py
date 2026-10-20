@@ -13,20 +13,23 @@ import threading
 from pathlib import Path
 import ssl
 from datetime import datetime, timezone
+
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
+
 PURPLE = "#8B5CF6"
 PURPLE_HOVER = "#7C3AED"
 BG_COLOR = "#111018"
 PANEL_COLOR = "#1C1A27"
 TEXT_COLOR = "#F4F0FF"
 MUTED_COLOR = "#A6A0B8"
+
 def inspect_url(value):
     value = value.strip()
     if not value:
-        raise ValueError("Please enter a URL.")
+        raise ValueError("Please enter a URL")
     if any(char.isspace() or ord(char) < 32 for char in value):
-        raise ValueError("URL cannot contain spaces or control characters.")
+        raise ValueError("URL cannot contain spaces or control characters")
     if "://" not in value:
         value = "https://" + value
     try:
@@ -38,7 +41,7 @@ def inspect_url(value):
     if parsed.scheme not in ("http", "https") or not hostname:
         raise ValueError("Enter a valid HTTP or HTTPS URL.")
     if parsed.username or parsed.password:
-        raise ValueError("URLs containing embedded credentials are not supported.")
+        raise ValueError("URLs containing embedded credentials are not supported")
     hostname = hostname.rstrip(".").encode("idna").decode("ascii").lower()
     if len(hostname) > 235 or any(
         not part or len(part) > 63 for part in hostname.split(".")
@@ -53,11 +56,11 @@ def inspect_url(value):
         warnings.append("Unusually long URL")
     try:
         ipaddress.ip_address(hostname)
-        warnings.append("Host is an IP address, not a domain name.")
+        warnings.append("Host is an IP address, not a domain name")
     except ValueError:
         pass
     if parsed.fragment:
-        warnings.append("URL contains a fragment (#section).")
+        warnings.append("URL contains a fragment (#section)")
     return {
         "url": value,
         "scheme": parsed.scheme,
@@ -66,6 +69,8 @@ def inspect_url(value):
         "path": parsed.path or "/",
         "warnings": warnings,
     }
+
+
 def calculate_risk(warnings):
     score = 0
     for warning in warnings:
@@ -90,8 +95,11 @@ def calculate_risk(warnings):
     else:
         level = "LOW"
     return score, level
+
+
 def inspect_ssl_certificate(hostname, port=443):
     context = ssl.create_default_context()
+
     context.check_hostname = True
     context.verify_mode = ssl.CERT_REQUIRED
     try:
@@ -199,6 +207,8 @@ def inspect_ssl_certificate(hostname, port=443):
             f"Could not inspect the TLS certificate for {hostname}.\n"
             f"Error: {error}"
         )
+
+
 def inspect_security_headers(value):
     value = value.strip()
     if not value:
@@ -295,6 +305,8 @@ def inspect_security_headers(value):
             "status_code": status_code,
             "findings": findings,
         }
+
+
 def enumerate_subdomains(value, resolve_dns=False):
     value = value.strip().lower().rstrip(".")
     if not value:
@@ -317,7 +329,7 @@ def enumerate_subdomains(value, resolve_dns=False):
     if any(
         not label
         or len(label) > 63
-        or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) 
+        or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
         for label in labels
     ):
         raise ValueError("Invalid domain name.")
@@ -407,7 +419,10 @@ from ipinfo_api import (
     api_key_path, load_ipinfo_key, save_ipinfo_key,
     remove_ipinfo_key, validate_ipinfo_key, lookup_ipinfo,
 )
+
+
 class NetSleuth(ctk.CTk):
+
     def __init__(self):
         super().__init__()
         self.title("NetSleuth")
@@ -517,6 +532,7 @@ class NetSleuth(ctk.CTk):
             font=ctk.CTkFont(size=10),
         ).pack(side="bottom", padx=14, pady=18)
         self.show_page("URL Scanner")
+
     def create_url_page(self):
         page = ctk.CTkFrame(self.page_area, fg_color="transparent")
         self.pages["URL Scanner"] = page
@@ -560,6 +576,7 @@ class NetSleuth(ctk.CTk):
             "Risk indicators are heuristic checks, not proof "
             "that a website is malicious or safe.\n",
         )
+
     def create_dns_page(self):
         page = ctk.CTkFrame(self.page_area, fg_color="transparent")
         self.pages["DNS Lookup"] = page
@@ -605,6 +622,7 @@ class NetSleuth(ctk.CTk):
             "DNS lookup ready.\n\n"
             "Enter a hostname above to resolve its IP addresses.",
         )
+
     def create_ssl_page(self):
         page = ctk.CTkFrame(self.page_area, fg_color="transparent")
         self.pages["SSL Checker"] = page
@@ -655,6 +673,7 @@ class NetSleuth(ctk.CTk):
             "Enter a hostname such as example.com.\n\n"
             "Internet access is required.",
         )
+
     def create_headers_page(self):
         page = ctk.CTkFrame(self.page_area, fg_color="transparent")
         self.pages["HTTP Headers"] = page
@@ -707,6 +726,7 @@ class NetSleuth(ctk.CTk):
             "their purpose. Missing headers alone do not prove "
             "a website is vulnerable.",
         )
+
     def create_subdomain_page(self):
         page = ctk.CTkFrame(self.page_area, fg_color="transparent")
         self.pages["Subdomain Enumerator"] = page
@@ -801,12 +821,12 @@ class NetSleuth(ctk.CTk):
             background=[
                 ("active", "#242033"),
                 ("!active", "#242033"),
-    ],
+            ],
             foreground=[
                 ("active", "#682BDA"),
                 ("!active", "#8122EE"),
-    ],
-)
+            ],
+        )
         self.subdomain_tree = ttk.Treeview(
             table_frame,
             columns=("host", "dns", "addresses"),
@@ -842,6 +862,7 @@ class NetSleuth(ctk.CTk):
         )
         scrollbar.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=8)
         self.subdomain_results = []
+
     def create_ipinfo_page(self):
         page = ctk.CTkFrame(self.page_area, fg_color="transparent")
         self.pages["IPinfo Lookup"] = page
@@ -853,7 +874,7 @@ class NetSleuth(ctk.CTk):
         key_buttons.pack(fill="x", pady=(0, 12))
         ctk.CTkButton(key_buttons, text="Validate & Save Key", fg_color=PURPLE, hover_color=PURPLE_HOVER, command=self.validate_and_save_ipinfo).pack(side="left", padx=(0, 8))
         ctk.CTkButton(key_buttons, text="Delete Saved Key", fg_color="#302744", hover_color="#403358", command=self.delete_saved_ipinfo).pack(side="left")
-        self.ipinfo_status = ctk.CTkLabel(page, text="No token loaded.", text_color=MUTED_COLOR, anchor="w", wraplength=650)
+        self.ipinfo_status = ctk.CTkLabel(page, text="No token loaded", text_color=MUTED_COLOR, anchor="w", wraplength=650)
         self.ipinfo_status.pack(fill="x", pady=(0, 10))
         self.ipinfo_ip_entry = ctk.CTkEntry(page, height=40, placeholder_text="IP address (leave blank to look up your public IP)", border_color=PURPLE, fg_color=PANEL_COLOR)
         self.ipinfo_ip_entry.pack(fill="x", pady=(0, 8))
@@ -861,11 +882,12 @@ class NetSleuth(ctk.CTk):
         self.ipinfo_lookup_button.pack(anchor="w", pady=(0, 12))
         self.ipinfo_results = ctk.CTkTextbox(page, wrap="word", font=ctk.CTkFont(family="Consolas", size=12), fg_color=PANEL_COLOR, border_width=1, border_color="#393148")
         self.ipinfo_results.pack(fill="both", expand=True)
-        self.ipinfo_results.insert("end", "IPinfo lookup ready\nGet a token at https://ipinfo.io/\n\nThe token is stored locally in the application-data folder This first version uses a local JSON file; it is not encrypted, so only use it on a trusted Windows account.")
+        self.ipinfo_results.insert("end", "IPinfo lookup ready\nGet a token at https://ipinfo.io/\n\nThe token is stored locally in the application-data folder This first version uses a local JSON file; it is not encrypted, so only use it on a trusted Windows account")
         saved_key = load_ipinfo_key()
         if saved_key:
             self.ipinfo_key_entry.insert(0, saved_key)
             self.ipinfo_status.configure(text=f"Saved token loaded. File: {api_key_path()}")
+
     def validate_and_save_ipinfo(self):
         api_key = self.ipinfo_key_entry.get().strip()
         if not api_key:
@@ -884,17 +906,20 @@ class NetSleuth(ctk.CTk):
                     message = "Token validated, but saving it locally failed."
             self.after(0, self.finish_ipinfo_save, valid, message, str(saved_path) if saved_path else "")
         threading.Thread(target=worker, daemon=True).start()
+
     def finish_ipinfo_save(self, valid, message, saved_path):
         if valid:
             self.ipinfo_status.configure(text=f"{message} Saved locally at: {saved_path}", text_color="#4ADE80")
         else:
             self.ipinfo_status.configure(text=message, text_color="#F87171")
+
     def delete_saved_ipinfo(self):
         if remove_ipinfo_key():
             self.ipinfo_key_entry.delete(0, "end")
             self.ipinfo_status.configure(text="Saved IPinfo token deleted.", text_color=TEXT_COLOR)
         else:
             self.ipinfo_status.configure(text="No saved token found, or deletion failed.", text_color=MUTED_COLOR)
+
     def lookup_ipinfo(self):
         api_key = load_ipinfo_key()
         if not api_key:
@@ -926,10 +951,12 @@ class NetSleuth(ctk.CTk):
                 report = "IPinfo lookup failed. Check your connection and saved token."
             self.after(0, self.finish_ipinfo_lookup, report)
         threading.Thread(target=worker, daemon=True).start()
+
     def finish_ipinfo_lookup(self, report):
         self.ipinfo_results.delete("1.0", "end")
         self.ipinfo_results.insert("end", report)
         self.ipinfo_lookup_button.configure(state="normal")
+
     def start_subdomain_scan(self):
         domain = self.subdomain_entry.get().strip()
         resolve_dns = self.subdomain_resolve_var.get()
@@ -966,6 +993,7 @@ class NetSleuth(ctk.CTk):
             except RuntimeError:
                 pass
         threading.Thread(target=worker, daemon=True).start()
+
     def show_subdomain_results(self, domain, results, error):
         self.subdomain_scan_button.configure(state="normal")
         if error:
@@ -988,6 +1016,7 @@ class NetSleuth(ctk.CTk):
         self.subdomain_export_button.configure(
             state="normal" if results else "disabled"
         )
+
     def export_subdomains(self):
         if not self.subdomain_results:
             return
@@ -1018,6 +1047,7 @@ class NetSleuth(ctk.CTk):
             self.subdomain_status.configure(
                 text=f"CSV export failed: {error}"
             )
+
     def show_page(self, page_name):
         for page in self.pages.values():
             page.grid_forget()
@@ -1040,6 +1070,7 @@ class NetSleuth(ctk.CTk):
             button.configure(
                 fg_color=PURPLE if name == page_name else "transparent"
             )
+
     def analyze_url(self):
         value = self.url_entry.get()
         try:
@@ -1086,6 +1117,7 @@ class NetSleuth(ctk.CTk):
             args=(info["host"],),
             daemon=True,
         ).start()
+
     def resolve_dns(self, hostname):
         try:
             addresses = sorted({
@@ -1098,11 +1130,13 @@ class NetSleuth(ctk.CTk):
         except OSError as error:
             message = f"DNS lookup failed: {error}"
         self.after(0, self.append_dns_result, message)
+
     def append_dns_result(self, message):
         current = self.results.get("1.0", "end").rstrip()
         current = current.replace("Resolving hostname...", message)
         self.results.delete("1.0", "end")
         self.results.insert("end", current)
+
     def lookup_dns(self):
         hostname = self.dns_entry.get().strip().rstrip(".")
         if (
@@ -1111,37 +1145,103 @@ class NetSleuth(ctk.CTk):
             or "://" in hostname
             or "/" in hostname
             or "@" in hostname
+            or "\\" in hostname
         ):
             self.dns_results.delete("1.0", "end")
             self.dns_results.insert(
                 "end", "Enter a hostname such as example.com"
             )
             return
+        try:
+            hostname = hostname.encode("idna").decode("ascii").lower()
+        except UnicodeError:
+            self.dns_results.delete("1.0", "end")
+            self.dns_results.insert("end", "Invalid hostname.")
+            return
         self.dns_results.delete("1.0", "end")
-        self.dns_results.insert("end", "Resolving hostname...")
+        self.dns_results.insert("end", "Inspecting DNS records...")
         def worker():
             try:
-                addresses = sorted({
-                    result[4][0]
-                    for result in socket.getaddrinfo(
-                        hostname, None, type=socket.SOCK_STREAM
-                    )
-                })
-                message = "\n".join(addresses) if addresses else "No addresses returned"
-            except OSError as error:
-                message = f"Lookup failed: {error}"
-            self.after(0, self.show_dns_results, hostname, message)
+                import dns.resolver
+
+                resolver = dns.resolver.Resolver()
+                resolver.timeout = 3
+                resolver.lifetime = 5
+                record_types = ("A", "AAAA", "MX", "NS", "TXT", "CNAME")
+                sections = []
+                for record_type in record_types:
+                    try:
+                        answers = resolver.resolve(
+                            hostname, record_type, raise_on_no_answer=False
+                        )
+                        values = [str(answer).strip() for answer in answers]
+                        if values:
+                            sections.append((record_type, values))
+                        else:
+                            sections.append((record_type, ["No records found"]))
+                    except dns.resolver.NoAnswer:
+                        sections.append((record_type, ["No records found"]))
+                    except dns.resolver.NXDOMAIN:
+                        sections.append((record_type, ["Domain does not exist (NXDOMAIN)"]))
+                        break
+                    except dns.resolver.NoNameservers:
+                        sections.append((record_type, ["No responding name servers"]))
+                    except dns.exception.Timeout:
+                        sections.append((record_type, ["DNS query timed out"]))
+                    except (dns.exception.DNSException, OSError) as error:
+                        sections.append((record_type, [f"Lookup failed: {error}"]))
+                message = sections
+            except ImportError:
+                message = "MISSING_DEPENDENCY"
+            except Exception as error:
+                message = f"DNS lookup failed: {error}"
+            try:
+                self.after(0, self.show_dns_results, hostname, message)
+            except RuntimeError:
+                pass
         threading.Thread(target=worker, daemon=True).start()
-    def show_dns_results(self, hostname, message):
+
+    def show_dns_results(self, hostname, sections):
         self.dns_results.delete("1.0", "end")
-        self.dns_results.insert(
-            "end",
-            f"DNS LOOKUP REPORT\n{'=' * 35}\n"
-            f"Hostname: {hostname}\n\n"
-            f"IP ADDRESSES\n{'-' * 35}\n"
-            f"{message}\n\n"
-            "This basic lookup does not retrieve MX or NS records.",
-        )
+        if sections == "MISSING_DEPENDENCY":
+            self.dns_results.insert(
+                "end",
+                "DNS record inspection requires dnspython.\n"
+                "Install it with: py -m pip install dnspython",
+            )
+            return
+        if isinstance(sections, str):
+            self.dns_results.insert("end", sections)
+            return
+        lines = [
+            "DNS RECORD INSPECTION REPORT",
+            "=" * 42,
+            f"Hostname: {hostname}",
+            f"Checked:  {datetime.now():%Y-%m-%d %H:%M:%S}",
+            "",
+            "RECORDS",
+            "-" * 42,
+        ]
+        descriptions = {
+            "A": "IPv4 addresses",
+            "AAAA": "IPv6 addresses",
+            "MX": "Mail servers",
+            "NS": "Authoritative name servers",
+            "TXT": "Text records (may include SPF information)",
+            "CNAME": "Canonical hostname aliases",
+        }
+        for record_type, values in sections:
+            lines.append(f"\n{record_type} — {descriptions[record_type]}")
+            lines.extend(f"  {value}" for value in values)
+        lines.extend([
+            "",
+            "NOTE",
+            "-" * 42,
+            "DNS records provide technical context, not a verdict",
+            "that a domain is safe or malicious.",
+        ])
+        self.dns_results.insert("end", "\n".join(lines))
+
     def check_ssl_certificate(self):
         hostname = self.ssl_entry.get().strip().rstrip(".")
         if (
@@ -1179,10 +1279,12 @@ class NetSleuth(ctk.CTk):
             except RuntimeError:
                 pass
         threading.Thread(target=worker, daemon=True).start()
+
     def show_ssl_results(self, report):
         self.ssl_results.delete("1.0", "end")
         self.ssl_results.insert("end", report)
         self.ssl_check_button.configure(state="normal")
+
     def check_security_headers(self):
         value = self.headers_entry.get().strip()
         self.headers_results.delete("1.0", "end")
@@ -1204,6 +1306,7 @@ class NetSleuth(ctk.CTk):
             except RuntimeError:
                 pass
         threading.Thread(target=worker, daemon=True).start()
+
     def format_headers_report(self, report):
         findings = report["findings"]
         applicable = [
@@ -1250,6 +1353,7 @@ class NetSleuth(ctk.CTk):
             "=" * 54,
         ])
         return "\n".join(lines)
+
     def show_headers_results(self, report):
         self.headers_results.delete("1.0", "end")
         self.headers_results.insert("end", report)

@@ -1,2 +1,3 @@
 customtkinter==5.2.2
 dnspython==2.8.0
+requests
