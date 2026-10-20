@@ -1,5 +1,9 @@
 
 import customtkinter as ctk
+import csv
+import json
+import re
+from tkinter import filedialog, ttk
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -8,6 +12,7 @@ import socket
 import threading
 import ssl
 from datetime import datetime, timezone
+
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
@@ -119,9 +124,7 @@ def inspect_ssl_certificate(hostname, port=443):
     context.verify_mode = ssl.CERT_REQUIRED
 
     try:
-        with socket.create_connection(
-            (hostname, port), timeout=7
-        ) as raw_socket:
+        with socket.create_connection((hostname, port), timeout=7) as raw_socket:
             with context.wrap_socket(
                 raw_socket, server_hostname=hostname
             ) as tls_socket:
@@ -360,8 +363,142 @@ def inspect_security_headers(value):
         }
 
 
-class NetSleuth(ctk.CTk):
+def enumerate_subdomains(value, resolve_dns=False):
+    value = value.strip().lower().rstrip(".")
 
+    if not value:
+        raise ValueError("Enter a domain such as example.com.")
+
+    if (
+        "://" in value
+        or "/" in value
+        or "@" in value
+        or ":" in value
+        or any(char.isspace() for char in value)
+    ):
+        raise ValueError("Enter a domain only, without a scheme or path.")
+
+    try:
+        value = value.encode("idna").decode("ascii")
+    except UnicodeError as error:
+        raise ValueError("Invalid domain name.") from error
+
+    if len(value) > 253 or "." not in value:
+        raise ValueError("Enter a fully qualified domain such as example.com.")
+
+    labels = value.split(".")
+
+    if any(
+        not label
+        or len(label) > 63
+        or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
+        for label in labels
+    ):
+        raise ValueError("Invalid domain name.")
+
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("Enter a domain name, not an IP address.")
+
+    request = Request(
+        "https://crt.sh/?q=%25." + value + "&output=json",
+        headers={
+            "User-Agent": "NetSleuth/1.0",
+            "Accept": "application/json",
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=20) as response:
+            payload = response.read(8 * 1024 * 1024 + 1)
+    except (URLError, TimeoutError, socket.timeout, OSError) as error:
+        raise RuntimeError(
+            f"Certificate Transparency lookup failed: {error}"
+        ) from error
+
+    if len(payload) > 8 * 1024 * 1024:
+        raise RuntimeError(
+            "The response was too large. Try a more specific domain."
+        )
+
+    try:
+        records = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            "The Certificate Transparency service returned invalid data."
+        ) from error
+
+    if not isinstance(records, list):
+        raise RuntimeError(
+            "Unexpected response from Certificate Transparency service."
+        )
+
+    found = set()
+
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+
+        names = record.get("name_value", "")
+
+        if not isinstance(names, str):
+            continue
+
+        for candidate in names.splitlines():
+            candidate = candidate.strip().lower().rstrip(".")
+
+            if candidate.startswith("*."):
+                candidate = candidate[2:]
+
+            try:
+                candidate = candidate.encode("idna").decode("ascii")
+            except UnicodeError:
+                continue
+
+            if candidate == value or candidate.endswith("." + value):
+                if len(candidate) <= 253 and all(
+                    label
+                    and len(label) <= 63
+                    and re.fullmatch(
+                        r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?",
+                        label,
+                    )
+                    for label in candidate.split(".")
+                ):
+                    found.add(candidate)
+
+    results = []
+
+    for hostname in sorted(found):
+        addresses = []
+        status = "Not checked"
+
+        if resolve_dns:
+            try:
+                addresses = sorted({
+                    item[4][0]
+                    for item in socket.getaddrinfo(
+                        hostname, None, type=socket.SOCK_STREAM
+                    )
+                })
+                status = "Resolves" if addresses else "No records"
+            except (socket.gaierror, OSError):
+                status = "No records"
+
+        results.append({
+            "subdomain": hostname,
+            "dns_status": status,
+            "addresses": ", ".join(addresses),
+            "source": "crt.sh / Certificate Transparency",
+        })
+
+    return value, results
+
+
+class NetSleuth(ctk.CTk):
     def __init__(self):
         super().__init__()
 
@@ -377,7 +514,7 @@ class NetSleuth(ctk.CTk):
             self,
             width=205,
             corner_radius=0,
-            fg_color="#171521"
+            fg_color="#171521",
         )
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_propagate(False)
@@ -386,14 +523,14 @@ class NetSleuth(ctk.CTk):
             self.sidebar,
             text="◈ NetSleuth",
             font=ctk.CTkFont(size=23, weight="bold"),
-            text_color=PURPLE
+            text_color=PURPLE,
         ).pack(padx=18, pady=(28, 4), anchor="w")
 
         ctk.CTkLabel(
             self.sidebar,
             text="SECURITY INTELLIGENCE",
             font=ctk.CTkFont(size=10),
-            text_color=MUTED_COLOR
+            text_color=MUTED_COLOR,
         ).pack(padx=20, pady=(0, 30), anchor="w")
 
         self.pages = {}
@@ -401,7 +538,7 @@ class NetSleuth(ctk.CTk):
         self.content = ctk.CTkFrame(
             self,
             corner_radius=0,
-            fg_color=BG_COLOR
+            fg_color=BG_COLOR,
         )
         self.content.grid(row=0, column=1, sticky="nsew")
         self.content.grid_rowconfigure(1, weight=1)
@@ -409,41 +546,41 @@ class NetSleuth(ctk.CTk):
 
         self.header = ctk.CTkFrame(
             self.content,
-            fg_color="transparent"
+            fg_color="transparent",
         )
         self.header.grid(
             row=0,
             column=0,
             sticky="ew",
             padx=28,
-            pady=(24, 10)
+            pady=(24, 10),
         )
 
         self.page_title = ctk.CTkLabel(
             self.header,
             text="URL Scanner",
             font=ctk.CTkFont(size=27, weight="bold"),
-            text_color=TEXT_COLOR
+            text_color=TEXT_COLOR,
         )
         self.page_title.pack(anchor="w")
 
         self.page_subtitle = ctk.CTkLabel(
             self.header,
             text="Inspect URLs, warnings and hostname information.",
-            text_color=MUTED_COLOR
+            text_color=MUTED_COLOR,
         )
         self.page_subtitle.pack(anchor="w", pady=(4, 0))
 
         self.page_area = ctk.CTkFrame(
             self.content,
-            fg_color="transparent"
+            fg_color="transparent",
         )
         self.page_area.grid(
             row=1,
             column=0,
             sticky="nsew",
             padx=25,
-            pady=(8, 20)
+            pady=(8, 20),
         )
         self.page_area.grid_rowconfigure(0, weight=1)
         self.page_area.grid_columnconfigure(0, weight=1)
@@ -452,14 +589,16 @@ class NetSleuth(ctk.CTk):
         self.create_dns_page()
         self.create_ssl_page()
         self.create_headers_page()
+        self.create_subdomain_page()
 
         self.nav_buttons = {}
 
         for name, label in [
-            ("URL Scanner", "⌕   URL Scanner"),
-            ("DNS Lookup", "◎   DNS Lookup"),
+            ("URL Scanner", "URL Scanner"),
+            ("DNS Lookup", "DNS Lookup"),
             ("SSL Checker", "SSL Checker"),
             ("HTTP Headers", "HTTP Headers"),
+            ("Subdomain Enumerator", "Subdomain Enumerator"),
         ]:
             button = ctk.CTkButton(
                 self.sidebar,
@@ -470,16 +609,16 @@ class NetSleuth(ctk.CTk):
                 fg_color="transparent",
                 hover_color="#302744",
                 text_color=TEXT_COLOR,
-                command=lambda page=name: self.show_page(page)
+                command=lambda page=name: self.show_page(page),
             )
             button.pack(fill="x", padx=12, pady=4)
             self.nav_buttons[name] = button
 
         ctk.CTkLabel(
             self.sidebar,
-            text="NETSLEUTH  •  LOCAL TOOL",
+            text="NETSLEUTH",
             text_color=MUTED_COLOR,
-            font=ctk.CTkFont(size=10)
+            font=ctk.CTkFont(size=10),
         ).pack(side="bottom", padx=14, pady=18)
 
         self.show_page("URL Scanner")
@@ -492,7 +631,7 @@ class NetSleuth(ctk.CTk):
             page,
             text="Enter a URL to investigate",
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color=TEXT_COLOR
+            text_color=TEXT_COLOR,
         ).pack(anchor="w", pady=(4, 10))
 
         self.url_entry = ctk.CTkEntry(
@@ -500,7 +639,7 @@ class NetSleuth(ctk.CTk):
             height=43,
             placeholder_text="https://example.com",
             border_color=PURPLE,
-            fg_color=PANEL_COLOR
+            fg_color=PANEL_COLOR,
         )
         self.url_entry.pack(fill="x", pady=(0, 10))
         self.url_entry.bind("<Return>", lambda event: self.analyze_url())
@@ -511,7 +650,7 @@ class NetSleuth(ctk.CTk):
             height=42,
             fg_color=PURPLE,
             hover_color=PURPLE_HOVER,
-            command=self.analyze_url
+            command=self.analyze_url,
         ).pack(anchor="w", pady=(0, 16))
 
         self.results = ctk.CTkTextbox(
@@ -520,7 +659,7 @@ class NetSleuth(ctk.CTk):
             font=ctk.CTkFont(family="Consolas", size=13),
             fg_color=PANEL_COLOR,
             border_width=1,
-            border_color="#393148"
+            border_color="#393148",
         )
         self.results.pack(fill="both", expand=True)
 
@@ -530,7 +669,7 @@ class NetSleuth(ctk.CTk):
             "Enter a URL to inspect its components and warnings.\n"
             "DNS address resolution runs after URL inspection.\n\n"
             "Risk indicators are heuristic checks, not proof "
-            "that a website is malicious or safe.\n"
+            "that a website is malicious or safe.\n",
         )
 
     def create_dns_page(self):
@@ -541,13 +680,13 @@ class NetSleuth(ctk.CTk):
             page,
             text="DNS Record Lookup",
             font=ctk.CTkFont(size=19, weight="bold"),
-            text_color=TEXT_COLOR
+            text_color=TEXT_COLOR,
         ).pack(anchor="w", pady=(4, 6))
 
         ctk.CTkLabel(
             page,
             text="Look up IP addresses for a hostname.",
-            text_color=MUTED_COLOR
+            text_color=MUTED_COLOR,
         ).pack(anchor="w", pady=(0, 14))
 
         self.dns_entry = ctk.CTkEntry(
@@ -555,7 +694,7 @@ class NetSleuth(ctk.CTk):
             height=43,
             placeholder_text="example.com",
             border_color=PURPLE,
-            fg_color=PANEL_COLOR
+            fg_color=PANEL_COLOR,
         )
         self.dns_entry.pack(fill="x", pady=(0, 10))
         self.dns_entry.bind("<Return>", lambda event: self.lookup_dns())
@@ -566,7 +705,7 @@ class NetSleuth(ctk.CTk):
             height=42,
             fg_color=PURPLE,
             hover_color=PURPLE_HOVER,
-            command=self.lookup_dns
+            command=self.lookup_dns,
         ).pack(anchor="w", pady=(0, 16))
 
         self.dns_results = ctk.CTkTextbox(
@@ -575,14 +714,14 @@ class NetSleuth(ctk.CTk):
             font=ctk.CTkFont(family="Consolas", size=13),
             fg_color=PANEL_COLOR,
             border_width=1,
-            border_color="#393148"
+            border_color="#393148",
         )
         self.dns_results.pack(fill="both", expand=True)
 
         self.dns_results.insert(
             "end",
             "DNS lookup ready.\n\n"
-            "Enter a hostname above to resolve its IP addresses."
+            "Enter a hostname above to resolve its IP addresses.",
         )
 
     def create_ssl_page(self):
@@ -593,13 +732,13 @@ class NetSleuth(ctk.CTk):
             page,
             text="SSL/TLS Certificate Checker",
             font=ctk.CTkFont(size=19, weight="bold"),
-            text_color=TEXT_COLOR
+            text_color=TEXT_COLOR,
         ).pack(anchor="w", pady=(4, 6))
 
         ctk.CTkLabel(
             page,
             text="Inspect HTTPS certificates, expiry dates and TLS versions.",
-            text_color=MUTED_COLOR
+            text_color=MUTED_COLOR,
         ).pack(anchor="w", pady=(0, 14))
 
         self.ssl_entry = ctk.CTkEntry(
@@ -607,12 +746,12 @@ class NetSleuth(ctk.CTk):
             height=43,
             placeholder_text="example.com",
             border_color=PURPLE,
-            fg_color=PANEL_COLOR
+            fg_color=PANEL_COLOR,
         )
         self.ssl_entry.pack(fill="x", pady=(0, 10))
         self.ssl_entry.bind(
             "<Return>",
-            lambda event: self.check_ssl_certificate()
+            lambda event: self.check_ssl_certificate(),
         )
 
         self.ssl_check_button = ctk.CTkButton(
@@ -621,7 +760,7 @@ class NetSleuth(ctk.CTk):
             height=42,
             fg_color=PURPLE,
             hover_color=PURPLE_HOVER,
-            command=self.check_ssl_certificate
+            command=self.check_ssl_certificate,
         )
         self.ssl_check_button.pack(anchor="w", pady=(0, 16))
 
@@ -631,7 +770,7 @@ class NetSleuth(ctk.CTk):
             font=ctk.CTkFont(family="Consolas", size=12),
             fg_color=PANEL_COLOR,
             border_width=1,
-            border_color="#393148"
+            border_color="#393148",
         )
         self.ssl_results.pack(fill="both", expand=True)
 
@@ -639,7 +778,7 @@ class NetSleuth(ctk.CTk):
             "end",
             "SSL/TLS certificate checker ready.\n\n"
             "Enter a hostname such as example.com.\n\n"
-            "Internet access is required."
+            "Internet access is required.",
         )
 
     def create_headers_page(self):
@@ -650,13 +789,13 @@ class NetSleuth(ctk.CTk):
             page,
             text="HTTP Security Headers Checker",
             font=ctk.CTkFont(size=19, weight="bold"),
-            text_color=TEXT_COLOR
+            text_color=TEXT_COLOR,
         ).pack(anchor="w", pady=(4, 6))
 
         ctk.CTkLabel(
             page,
             text="Check a website's response for common security headers.",
-            text_color=MUTED_COLOR
+            text_color=MUTED_COLOR,
         ).pack(anchor="w", pady=(0, 14))
 
         self.headers_entry = ctk.CTkEntry(
@@ -664,12 +803,12 @@ class NetSleuth(ctk.CTk):
             height=43,
             placeholder_text="https://example.com",
             border_color=PURPLE,
-            fg_color=PANEL_COLOR
+            fg_color=PANEL_COLOR,
         )
         self.headers_entry.pack(fill="x", pady=(0, 10))
         self.headers_entry.bind(
             "<Return>",
-            lambda event: self.check_security_headers()
+            lambda event: self.check_security_headers(),
         )
 
         self.headers_check_button = ctk.CTkButton(
@@ -678,7 +817,7 @@ class NetSleuth(ctk.CTk):
             height=42,
             fg_color=PURPLE,
             hover_color=PURPLE_HOVER,
-            command=self.check_security_headers
+            command=self.check_security_headers,
         )
         self.headers_check_button.pack(anchor="w", pady=(0, 16))
 
@@ -688,7 +827,7 @@ class NetSleuth(ctk.CTk):
             font=ctk.CTkFont(family="Consolas", size=12),
             fg_color=PANEL_COLOR,
             border_width=1,
-            border_color="#393148"
+            border_color="#393148",
         )
         self.headers_results.pack(fill="both", expand=True)
 
@@ -698,8 +837,246 @@ class NetSleuth(ctk.CTk):
             "Enter a website URL to inspect its response headers.\n\n"
             "The report identifies missing headers and explains "
             "their purpose. Missing headers alone do not prove "
-            "a website is vulnerable."
+            "a website is vulnerable.",
         )
+
+    def create_subdomain_page(self):
+        page = ctk.CTkFrame(self.page_area, fg_color="transparent")
+        self.pages["Subdomain Enumerator"] = page
+
+        ctk.CTkLabel(
+            page,
+            text="Passive Subdomain Enumeration",
+            font=ctk.CTkFont(size=19, weight="bold"),
+            text_color=TEXT_COLOR,
+        ).pack(anchor="w", pady=(4, 6))
+
+        ctk.CTkLabel(
+            page,
+            text="Discover hostnames from public Certificate Transparency logs.",
+            text_color=MUTED_COLOR,
+        ).pack(anchor="w", pady=(0, 12))
+
+        self.subdomain_entry = ctk.CTkEntry(
+            page,
+            height=42,
+            placeholder_text="example.com",
+            border_color=PURPLE,
+            fg_color=PANEL_COLOR,
+        )
+        self.subdomain_entry.pack(fill="x", pady=(0, 9))
+        self.subdomain_entry.bind(
+            "<Return>",
+            lambda event: self.start_subdomain_scan(),
+        )
+
+        controls = ctk.CTkFrame(page, fg_color="transparent")
+        controls.pack(fill="x", pady=(0, 12))
+
+        self.subdomain_resolve_var = ctk.BooleanVar(value=False)
+
+        ctk.CTkCheckBox(
+            controls,
+            text="Resolve discovered hosts with DNS",
+            variable=self.subdomain_resolve_var,
+            text_color=TEXT_COLOR,
+            fg_color=PURPLE,
+            hover_color=PURPLE_HOVER,
+        ).pack(side="left", padx=(0, 12))
+
+        self.subdomain_scan_button = ctk.CTkButton(
+            controls,
+            text="Enumerate",
+            height=38,
+            fg_color=PURPLE,
+            hover_color=PURPLE_HOVER,
+            command=self.start_subdomain_scan,
+        )
+        self.subdomain_scan_button.pack(side="left", padx=(0, 8))
+
+        self.subdomain_export_button = ctk.CTkButton(
+            controls,
+            text="Export CSV",
+            height=38,
+            fg_color="#302744",
+            hover_color="#403358",
+            command=self.export_subdomains,
+            state="disabled",
+        )
+        self.subdomain_export_button.pack(side="left")
+
+        self.subdomain_status = ctk.CTkLabel(
+            page,
+            text="Ready",
+            text_color=MUTED_COLOR,
+            anchor="w",
+        )
+        self.subdomain_status.pack(fill="x", pady=(0, 8))
+
+        table_frame = ctk.CTkFrame(
+            page,
+            fg_color=PANEL_COLOR,
+            corner_radius=8,
+        )
+        table_frame.pack(fill="both", expand=True)
+        table_frame.grid_rowconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
+
+        style = ttk.Style()
+        style.configure(
+            "NetSleuth.Treeview",
+            background=PANEL_COLOR,
+            foreground=TEXT_COLOR,
+            fieldbackground=PANEL_COLOR,
+            rowheight=27,
+            borderwidth=0,
+        )
+        style.configure(
+            "NetSleuth.Treeview.Heading",
+            background="#302744",
+            foreground=TEXT_COLOR,
+            relief="flat",
+        )
+        style.map(
+            "NetSleuth.Treeview",
+            background=[("selected", PURPLE)],
+            foreground=[("selected", "#FFFFFF")],
+        )
+
+        self.subdomain_tree = ttk.Treeview(
+            table_frame,
+            columns=("host", "dns", "addresses"),
+            show="headings",
+            style="NetSleuth.Treeview",
+        )
+        self.subdomain_tree.heading("host", text="Subdomain")
+        self.subdomain_tree.heading("dns", text="DNS Status")
+        self.subdomain_tree.heading("addresses", text="IP Addresses")
+        self.subdomain_tree.column("host", width=240, minwidth=150)
+        self.subdomain_tree.column(
+            "dns", width=110, minwidth=90, anchor="center"
+        )
+        self.subdomain_tree.column(
+            "addresses", width=250, minwidth=150
+        )
+
+        scrollbar = ttk.Scrollbar(
+            table_frame,
+            orient="vertical",
+            command=self.subdomain_tree.yview,
+        )
+        self.subdomain_tree.configure(yscrollcommand=scrollbar.set)
+        self.subdomain_tree.grid(
+            row=0, column=0, sticky="nsew", padx=(8, 0), pady=8
+        )
+        scrollbar.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=8)
+
+        self.subdomain_results = []
+
+    def start_subdomain_scan(self):
+        domain = self.subdomain_entry.get().strip()
+        resolve_dns = self.subdomain_resolve_var.get()
+
+        self.subdomain_scan_button.configure(state="disabled")
+        self.subdomain_export_button.configure(state="disabled")
+        self.subdomain_status.configure(
+            text="Querying public Certificate Transparency records..."
+        )
+
+        for item in self.subdomain_tree.get_children():
+            self.subdomain_tree.delete(item)
+
+        self.subdomain_results = []
+
+        def worker():
+            try:
+                normalized_domain, results = enumerate_subdomains(
+                    domain, resolve_dns
+                )
+                message = None
+            except (ValueError, RuntimeError, UnicodeError) as error:
+                normalized_domain, results, message = "", [], str(error)
+            except Exception as error:
+                normalized_domain, results, message = (
+                    "",
+                    [],
+                    f"Unexpected error: {error}",
+                )
+
+            try:
+                self.after(
+                    0,
+                    self.show_subdomain_results,
+                    normalized_domain,
+                    results,
+                    message,
+                )
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def show_subdomain_results(self, domain, results, error):
+        self.subdomain_scan_button.configure(state="normal")
+
+        if error:
+            self.subdomain_status.configure(text=f"Lookup failed: {error}")
+            return
+
+        self.subdomain_results = results
+
+        for result in results:
+            self.subdomain_tree.insert(
+                "",
+                "end",
+                values=(
+                    result["subdomain"],
+                    result["dns_status"],
+                    result["addresses"],
+                ),
+            )
+
+        self.subdomain_status.configure(
+            text=f"{len(results)} unique hostnames found for {domain} | Source: crt.sh"
+        )
+        self.subdomain_export_button.configure(
+            state="normal" if results else "disabled"
+        )
+
+    def export_subdomains(self):
+        if not self.subdomain_results:
+            return
+
+        path = filedialog.asksaveasfilename(
+            title="Export subdomain results",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+        )
+
+        if not path:
+            return
+
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as output:
+                writer = csv.DictWriter(
+                    output,
+                    fieldnames=(
+                        "subdomain",
+                        "dns_status",
+                        "addresses",
+                        "source",
+                    ),
+                )
+                writer.writeheader()
+                writer.writerows(self.subdomain_results)
+
+            self.subdomain_status.configure(
+                text=f"Exported {len(self.subdomain_results)} results."
+            )
+        except OSError as error:
+            self.subdomain_status.configure(
+                text=f"CSV export failed: {error}"
+            )
 
     def show_page(self, page_name):
         for page in self.pages.values():
@@ -708,7 +1085,7 @@ class NetSleuth(ctk.CTk):
         self.pages[page_name].grid(
             row=0,
             column=0,
-            sticky="nsew"
+            sticky="nsew",
         )
 
         self.page_title.configure(text=page_name)
@@ -718,6 +1095,7 @@ class NetSleuth(ctk.CTk):
             "DNS Lookup": "Resolve a hostname to its IP addresses.",
             "SSL Checker": "Inspect HTTPS certificates and TLS connections.",
             "HTTP Headers": "Inspect HTTP responses for security headers.",
+            "Subdomain Enumerator": "Discover hostnames from public certificate records.",
         }
 
         self.page_subtitle.configure(text=subtitles[page_name])
@@ -759,9 +1137,11 @@ class NetSleuth(ctk.CTk):
         ]
 
         if info["warnings"]:
-            report.extend(f"[!] {warning}" for warning in info["warnings"])
+            report.extend(
+                f"[!] {warning}" for warning in info["warnings"]
+            )
         else:
-            report.append("No configured warnings detected.")
+            report.append("No configured warnings detected")
 
         report.extend([
             "",
@@ -776,7 +1156,7 @@ class NetSleuth(ctk.CTk):
         threading.Thread(
             target=self.resolve_dns,
             args=(info["host"],),
-            daemon=True
+            daemon=True,
         ).start()
 
     def resolve_dns(self, hostname):
@@ -787,7 +1167,7 @@ class NetSleuth(ctk.CTk):
                     hostname, None, type=socket.SOCK_STREAM
                 )
             })
-            message = "\n".join(addresses) if addresses else "No addresses returned."
+            message = "\n".join(addresses) if addresses else "No addresses returned"
         except OSError as error:
             message = f"DNS lookup failed: {error}"
 
@@ -810,7 +1190,9 @@ class NetSleuth(ctk.CTk):
             or "@" in hostname
         ):
             self.dns_results.delete("1.0", "end")
-            self.dns_results.insert("end", "Enter a hostname such as example.com.")
+            self.dns_results.insert(
+                "end", "Enter a hostname such as example.com"
+            )
             return
 
         self.dns_results.delete("1.0", "end")
@@ -824,7 +1206,7 @@ class NetSleuth(ctk.CTk):
                         hostname, None, type=socket.SOCK_STREAM
                     )
                 })
-                message = "\n".join(addresses) if addresses else "No addresses returned."
+                message = "\n".join(addresses) if addresses else "No addresses returned"
             except OSError as error:
                 message = f"Lookup failed: {error}"
 
@@ -840,7 +1222,7 @@ class NetSleuth(ctk.CTk):
             f"Hostname: {hostname}\n\n"
             f"IP ADDRESSES\n{'-' * 35}\n"
             f"{message}\n\n"
-            "This basic lookup does not retrieve MX or NS records."
+            "This basic lookup does not retrieve MX or NS records.",
         )
 
     def check_ssl_certificate(self):
@@ -859,7 +1241,7 @@ class NetSleuth(ctk.CTk):
             self.ssl_results.insert(
                 "end",
                 "Enter a hostname only, such as example.com.\n"
-                "Do not include https://, a path or a port."
+                "Do not include https://, a path or a port.",
             )
             return
 
@@ -867,11 +1249,14 @@ class NetSleuth(ctk.CTk):
             hostname = hostname.encode("idna").decode("ascii").lower()
         except UnicodeError:
             self.ssl_results.delete("1.0", "end")
-            self.ssl_results.insert("end", "Invalid hostname.")
+            self.ssl_results.insert("end", "Invalid hostname")
             return
 
         self.ssl_results.delete("1.0", "end")
-        self.ssl_results.insert("end", f"Checking TLS certificate for {hostname}...\nPlease wait.")
+        self.ssl_results.insert(
+            "end",
+            f"Checking TLS certificate for {hostname}...\n",
+        )
         self.ssl_check_button.configure(state="disabled")
 
         def worker():
@@ -893,7 +1278,10 @@ class NetSleuth(ctk.CTk):
         value = self.headers_entry.get().strip()
 
         self.headers_results.delete("1.0", "end")
-        self.headers_results.insert("end", "Checking HTTP security headers...\nPlease wait.")
+        self.headers_results.insert(
+            "end",
+            "Checking HTTP security headers...\n",
+        )
         self.headers_check_button.configure(state="disabled")
 
         def worker():
@@ -918,12 +1306,17 @@ class NetSleuth(ctk.CTk):
             item for item in findings
             if item["status"] != "NOT APPLICABLE"
         ]
-        present = sum(item["status"] == "PRESENT" for item in applicable)
-        missing = sum(item["status"] == "MISSING" for item in applicable)
+
+        present = sum(
+            item["status"] == "PRESENT" for item in applicable
+        )
+        missing = sum(
+            item["status"] == "MISSING" for item in applicable
+        )
 
         lines = [
             "=" * 54,
-            "NETSLEUTH - HTTP SECURITY HEADERS REPORT",
+            "HTTP SECURITY HEADERS REPORT",
             "=" * 54,
             f"Requested URL: {report['requested_url']}",
             f"Final URL:     {report['final_url']}",
@@ -952,9 +1345,9 @@ class NetSleuth(ctk.CTk):
             "NOTES",
             "-" * 54,
             "Missing headers are potential hardening opportunities,",
-            "not automatic proof of a vulnerability.",
+            "not automatic proof of a vulnerability",
             "Header values should be reviewed for correctness,",
-            "not just presence.",
+            "not just presence",
             "=" * 54,
         ])
 
