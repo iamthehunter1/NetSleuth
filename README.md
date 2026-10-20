@@ -16,6 +16,12 @@ Some features require an internet connection. IP information lookup may also req
 - Requests
 - PyInstaller
 
+## Screenshots
+
+![NetSleuth](netsleuth.PNG)
+
 ## Disclaimer
 
 NetSleuth is intended for educational and authorized security testing. Only scan systems you own or have permission to assess.
+
+
